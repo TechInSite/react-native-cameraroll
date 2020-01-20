@@ -221,7 +221,7 @@ RCT_EXPORT_METHOD(getPhotos:(NSDictionary *)params
   checkPhotoLibraryConfig();
 
   NSUInteger const first = [RCTConvert NSInteger:params[@"first"]];
-  NSString *const afterCursor = [RCTConvert NSString:params[@"after"]];
+  NSUInteger *const afterCursor = [RCTConvert NSInteger:params[@"after"]];
   NSString *const groupName = [RCTConvert NSString:params[@"groupName"]];
   NSString *const groupTypes = [[RCTConvert NSString:params[@"groupTypes"]] lowercaseString];
   NSString *const mediaType = [RCTConvert NSString:params[@"assetType"]];
@@ -238,7 +238,6 @@ RCT_EXPORT_METHOD(getPhotos:(NSDictionary *)params
   PHFetchOptions *const assetFetchOptions = [RCTConvert PHFetchOptionsFromMediaType:mediaType];
   assetFetchOptions.sortDescriptors = @[[NSSortDescriptor sortDescriptorWithKey:@"creationDate" ascending:NO]];
   
-  BOOL __block foundAfter = NO;
   BOOL __block hasNextPage = NO;
   BOOL __block resolvedPromise = NO;
   NSMutableArray<NSDictionary<NSString *, id> *> *assets = [NSMutableArray new];
@@ -256,12 +255,6 @@ RCT_EXPORT_METHOD(getPhotos:(NSDictionary *)params
   requestPhotoLibraryAccess(reject, ^{
     void (^collectAsset)(PHAsset*, NSUInteger, BOOL*) = ^(PHAsset * _Nonnull asset, NSUInteger assetIdx, BOOL * _Nonnull stopAssets) {
       NSString *const uri = [NSString stringWithFormat:@"ph://%@", [asset localIdentifier]];
-      if (afterCursor && !foundAfter) {
-        if ([afterCursor isEqualToString:uri]) {
-          foundAfter = YES;
-        }
-        return; // skip until we get to the first one
-      }
 
       // Get underlying resources of an asset - this includes files as well as details about edited PHAssets
       NSArray<PHAssetResource *> *const assetResources = [PHAssetResource assetResourcesForAsset:asset];
@@ -339,14 +332,19 @@ RCT_EXPORT_METHOD(getPhotos:(NSDictionary *)params
       }];
     };
 
+    // Prepare for retrieving one page
+    NSIndexSet* indexesInPage = [NSIndexSet indexSetWithIndexesInRange:(NSMakeRange(afterCursor, first)];
+                                                                        
     if ([groupTypes isEqualToString:@"all"]) {
       PHFetchResult <PHAsset *> *const assetFetchResult = [PHAsset fetchAssetsWithOptions: assetFetchOptions];
       currentCollectionName = @"All Photos";
-      [assetFetchResult enumerateObjectsUsingBlock:collectAsset];
+      
+      // Grab just one page from the result set and enumerate it.
+      [[assetFetchResult objectsAtIndexes:indexesInPage] enumerateObjectsUsingBlock:collectAsset];
     } else {
       PHFetchResult<PHAssetCollection *> *const assetCollectionFetchResult = [PHAssetCollection fetchAssetCollectionsWithType:collectionType subtype:collectionSubtype options:collectionFetchOptions];
       [assetCollectionFetchResult enumerateObjectsUsingBlock:^(PHAssetCollection * _Nonnull assetCollection, NSUInteger collectionIdx, BOOL * _Nonnull stopCollections) {
-        // Enumerate assets within the collection
+        // Enumerate assets within the collection, but only one page worth
         PHFetchResult<PHAsset *> *const assetsFetchResult = [PHAsset fetchAssetsInAssetCollection:assetCollection options:assetFetchOptions];
         currentCollectionName = [assetCollection localizedTitle];
         [assetsFetchResult enumerateObjectsUsingBlock:collectAsset];
